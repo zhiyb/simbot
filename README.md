@@ -1,1 +1,2 @@
-GSM modem tests
+# simbot
+Bot using SIM7xxx for SMS etc.
