@@ -34,8 +34,11 @@ def main():
     #print(sim.test_sim())
 
     while True:
-        sim.proc()
-        time.sleep(1)
+        ev = sim.proc()
+        if ev:
+            print(ev)
+        else:
+            time.sleep(1)
 
 if __name__ == "__main__":
     main()

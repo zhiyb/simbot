@@ -15,6 +15,7 @@ class sim7080:
     """
     def __init__(self, name, at_dev):
         self._at = atmodem(f"{name}_AT", at_dev)
+        self._events = []
         self._logger = logging.getLogger(name)
 
     def _set_encoding(self, enc: str):
@@ -22,7 +23,7 @@ class sim7080:
 
     def test_sim(self) -> bool:
         resp = self._at.cmd_read("+CPIN")
-        return resp[1] == "READY"
+        return resp[1][0][0] == "READY"
 
     def dial(self) -> bool:
         raise Exception("TODO")
@@ -35,7 +36,7 @@ class sim7080:
         if resp[0] != "OK":
             self._logger.warning(f"Failed to get subscriber number: {resp}")
             return None
-        num = resp[2]
+        num = resp[1][0][1]
         self._logger.info(f"#: {num}")
         return num
 
@@ -57,6 +58,7 @@ class sim7080:
     def init(self):
         self._logger.info(f"Init")
         self._at.init()
+        self.recv_sms()
 
     def test(self):
         self._logger.info(f"Test")
@@ -69,20 +71,39 @@ class sim7080:
         timestr = datetime.datetime.now().ctime()
         #self.send_sms(**censored**, f"{timestr}\n蛤 UCS2 🤔\ntest")
 
+    def recv_sms(self, enc="UCS2"):
+        self._set_encoding(enc)
+
+        self._at.cmd_write("+CMGL", "ALL", enc_str=False)
+        resp = self._at.cmd_resp()
+        if resp[0] != "OK":
+            raise Exception("Unable to read SMS")
+        count = len(resp[1])
+        for i in range(0, count, 2):
+            info = resp[1][i]
+            text = resp[1][i + 1]
+            src = self._at.decode(info[2], "UCS2")
+            self._logger.info(f"Received SMS from {src}: {text}")
+            self._events.append({"type": "sms", "src": src, "info": info, "text": text})
+
+        self._set_encoding('GSM')
+        pass
+
     def proc(self, timeout=None):
-        self._at.cmd_read("+CNMI")
+        #self._at.cmd_read("+CNMI")
+
+        if self._events:
+            return self._events.pop(0)
 
         resp = self._at.wait_event(timeout=timeout)
-        self._logger.debug(resp)
         if not resp:
             return None
-
         if resp[0] == "+CMTI":
-            if 0:
-                # Received SMS
-                self._at.cmd_exec("+CMGL")
-                # Max response time: 20s
-                resp = self._at.cmd_resp(timeout=25)
-                self._logger.debug(resp)
+            # Received new SMS
+            self.recv_sms()
+        else:
+            self._logger.debug(resp)
 
-        return resp
+        if self._events:
+            return self._events.pop(0)
+        return None

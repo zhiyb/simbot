@@ -13,57 +13,66 @@ class atmodem:
                                      timeout = self._timeout)
         self._encoding = "GSM"
         self._requests = []
-        self._response = None
+        self._response = []
         self._events = []
         self._logger = logging.getLogger(name)
 
-    def _encode(self, input: str) -> str:
-        if self._encoding == 'GSM':
+    def encode(self, input: str, encoding: str) -> str:
+        if encoding == 'GSM':
             ret = input
             #ret = str.encode('ascii').decode('ascii')
-        elif self._encoding == 'UCS2':
+        elif encoding == 'UCS2':
             data = input.encode('utf-16be')
             ret = data.hex().upper()
         else:
-            raise Exception(f"Unknown encoding {self._encoding}: {input}")
+            raise Exception(f"Unknown encoding {encoding}: {input}")
         return ret
 
-    def _decode(self, input: str) -> str:
-        if self._encoding == 'GSM':
+    def decode(self, input: str, encoding: str) -> str:
+        if encoding == 'GSM':
             ret = input
             #ret = str.encode('ascii').decode('ascii')
-        elif self._encoding == 'UCS2':
+        elif encoding == 'UCS2':
             ret = bytearray.fromhex(input).decode('utf-16be')
         else:
-            raise Exception(f"Unknown encoding {self._encoding}: {input}")
+            raise Exception(f"Unknown encoding {encoding}: {input}")
         return ret
 
-    def cmd_test(self, cmd: str):
-        self._requests.append(("cmd", cmd, f"{cmd}=?"))
+    def _encode(self, input: str) -> str:
+        return self.encode(input, self._encoding)
 
-    def cmd_exec(self, cmd: str):
-        self._requests.append(("cmd", cmd, f"{cmd}"))
+    def _decode(self, input: str) -> str:
+        return self.decode(input, self._encoding)
 
-    def cmd_read(self, cmd: str, timeout: int = None):
-        self._requests.append(("cmd", cmd, f"{cmd}?"))
+    def cmd_test(self, cmd: str, enc_str=True):
+        self._requests.append(("cmd", cmd, f"{cmd}=?", enc_str))
+
+    def cmd_exec(self, cmd: str, enc_str=True):
+        self._requests.append(("cmd", cmd, f"{cmd}", enc_str))
+
+    def cmd_read(self, cmd: str, timeout=None, enc_str=True):
+        self._requests.append(("cmd", cmd, f"{cmd}?", enc_str))
         return self.cmd_resp(cmd, timeout)
 
-    def cmd_write(self, cmd: str, *args):
+    def cmd_write(self, cmd: str, *args, enc_str=True):
         sargs = []
         for a in args:
             if type(a) == str:
-                sargs.append(f'"{self._encode(a)}"')
+                if enc_str:
+                    sargs.append(f'"{self._encode(a)}"')
+                else:
+                    sargs.append(f'"{a}"')
             elif type(a) == int:
                 sargs.append(str(a))
             else:
                 raise Exception(f"Unknown cmd args type: {type(a)}: {a}")
         data = f"{cmd}=" + ",".join(sargs)
-        self._requests.append(("cmd", cmd, data))
+        self._requests.append(("cmd", cmd, data, enc_str))
 
     def cmd_write_data(self, data: str):
         self._requests.append(("data", data))
 
-    def cmd_resp(self, cmd: str = None, timeout = None):
+    def cmd_resp(self, cmd: str = None, timeout=None):
         self._requests.append(("resp", cmd, timeout))
         return self._proc()
 
@@ -89,17 +98,20 @@ class atmodem:
             self._serial.timeout = self._timeout
         return resp
 
-    def _parse_resp(self, text: str):
+    def _parse_resp(self, text: str, dec_str=True):
         #self._logger.debug(f"parse {text}")
         resp = []
         for m in re.split(r'(\([^\)]*\)|\"[^\"]*\"|[0-9]+|[A-Z ]+)', text):
             if m == '' or m == ',':
                 continue
             elif m.startswith('"'):
-                resp.append(self._decode(m[1:-1]))
+                if dec_str:
+                    resp.append(self._decode(m[1:-1]))
+                else:
+                    resp.append(m[1:-1])
             else:
                 resp.append(m)
-        return resp
+        return tuple(resp)
 
     def _parse_events(self, resp: str):
         if re.match(r'\+[A-Z]+:', resp):
@@ -109,10 +121,10 @@ class atmodem:
         return False
 
     def _proc(self):
-        self._response = None
         while self._requests:
             req = self._requests.pop(0)
             #self._logger.debug(f"proc {req}")
+            self._response = []
 
             op = req[0]
             if op == "raw":
@@ -136,7 +148,7 @@ class atmodem:
                 return self._events[0]
 
             elif op == "cmd":
-                _, cmd, data = req
+                _, cmd, data, enc_str = req
                 if cmd.startswith("+"):
                     data = f"AT{data}\r"
                 else:
@@ -151,10 +163,7 @@ class atmodem:
                     if not resp:
                         continue
                     elif resp == "OK":
-                        if self._response == None:
-                            self._response = ("OK", None)
-                        else:
-                            self._response = ("OK", *self._response)
+                        self._response = ("OK", self._response)
                         if self._requests and self._requests[0][0] == "resp":
                             resp = self._requests.pop(0)
                             _, cmd, timeout = resp
@@ -164,11 +173,11 @@ class atmodem:
                     elif resp.startswith(f"{cmd}:"):
                         rcmd = cmd.replace("+", "\\+")
                         m = re.fullmatch(fr"{rcmd}:\s+(?P<resp>.*)", resp)
-                        self._response = self._parse_resp(m["resp"])
+                        self._response.append(self._parse_resp(m["resp"], dec_str=enc_str))
                         #self._logger.debug(f"cmd resp {req}: {resp}, {self._response}")
                     elif resp.startswith("+CME ERROR"):
                         m = re.fullmatch(r"\+CME ERROR:\s+(?P<resp>.*)", resp)
-                        self._response = ("+CME ERROR", *self._parse_resp(m["resp"]))
+                        self._response = ("+CME ERROR", [self._parse_resp(m["resp"], dec_str=enc_str)])
                         if self._requests and self._requests[0][0] == "resp":
                             resp = self._requests.pop(0)
                             _, cmd, timeout = resp
@@ -195,7 +204,8 @@ class atmodem:
                     elif self._parse_events(resp):
                         continue
                     else:
-                        raise Exception(f"Unrecognised response to {req}: {resp}")
+                        self._response.append(self._decode(resp))
+                        #raise Exception(f"Unrecognised response to {req}: {resp}")
 
             else:
                 raise Exception(f"Unknown operation: {req}")
