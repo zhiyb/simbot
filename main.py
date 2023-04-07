@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
-import os, re, time, datetime
+import os, time
 import logging
 import pyudev
-import serial
-from atmodem import *
 from sim7080 import *
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG)
@@ -34,11 +32,9 @@ def main():
     #print(sim.test_sim())
 
     while True:
-        ev = sim.proc()
+        ev = sim.proc(1)
         if ev:
             print(ev)
-        else:
-            time.sleep(1)
 
 if __name__ == "__main__":
     main()

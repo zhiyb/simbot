@@ -100,8 +100,11 @@ class atmodem:
 
     def _parse_resp(self, text: str, dec_str=True):
         #self._logger.debug(f"parse {text}")
+        if re.fullmatch(r'\([^()]*\)', text):
+            text = text[1:-1]
         resp = []
-        for m in re.split(r'(\([^\)]*\)|\"[^\"]*\"|[0-9]+|[A-Z ]+)', text):
+        # re.split(r'(\([^\)]*\)|\"[^\"]*\"|[0-9]+|[A-Z ]+)', text):
+        for m in text.split(","):
             if m == '' or m == ',':
                 continue
             elif m.startswith('"'):
@@ -109,6 +112,10 @@ class atmodem:
                     resp.append(self._decode(m[1:-1]))
                 else:
                     resp.append(m[1:-1])
+            elif re.fullmatch(r'-?[0-9]+', m):
+                resp.append(int(m))
+            elif re.fullmatch(r'0x[0-9A-F]+', m):
+                resp.append(int(m, 16))
             else:
                 resp.append(m)
         return tuple(resp)
@@ -164,6 +171,14 @@ class atmodem:
                         continue
                     elif resp == "OK":
                         self._response = ("OK", self._response)
+                        if self._requests and self._requests[0][0] == "resp":
+                            resp = self._requests.pop(0)
+                            _, cmd, timeout = resp
+                            #self._logger.debug(f"resp {resp}: {self._response}")
+                            return self._response
+                        break
+                    elif resp == "ERROR":
+                        self._response = ("ERROR", self._response)
                         if self._requests and self._requests[0][0] == "resp":
                             resp = self._requests.pop(0)
                             _, cmd, timeout = resp
